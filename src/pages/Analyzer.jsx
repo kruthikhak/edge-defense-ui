@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import api from '../api/client';
 import { Activity, AlertTriangle, CheckCircle } from 'lucide-react';
+import { saveToHistory } from '../lib/history';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Cell
 } from 'recharts';
 
-export default function Analyzer({ setApiOffline }) {
+export default function Analyzer({ setApiOffline, onAnalysisComplete }) {
   const [flows, setFlows] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [result, setResult] = useState(null);
@@ -36,6 +37,9 @@ export default function Analyzer({ setApiOffline }) {
       const res = await api.get(`/sample-analyze/${selectedIndex}`);
       setResult(res.data);
       setApiOffline(false);
+      // Persist to localStorage history
+      saveToHistory(res.data, 'sample');
+      if (onAnalysisComplete) onAnalysisComplete();
     } catch (err) {
       setApiOffline(true);
       setError('Analysis failed. API may be offline or cold-starting.');

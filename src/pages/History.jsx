@@ -1,44 +1,66 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../api/client';
-import { Clock, RefreshCw, Zap } from 'lucide-react';
+import { Clock, RefreshCw, Zap, Trash2 } from 'lucide-react';
+import { getHistory, clearHistory } from '../lib/history';
 
 export default function History({ setApiOffline }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [error, setError] = useState(null);
+  const [source, setSource] = useState('local'); // 'local' | 'api'
 
+  // ── Fetch from localStorage (primary) + API (secondary merge) ──────
   const fetchHistory = useCallback(async () => {
+    setLoading(true);
+
+    // 1. Always load from localStorage first
+    const localRows = getHistory();
+
+    // 2. Try backend API as secondary source
+    let apiRows = [];
     try {
       const res = await api.get('/history');
-      setRows(res.data);
-      setApiOffline(false);
-      setError(null);
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        apiRows = res.data;
+        setApiOffline(false);
+      }
     } catch {
-      setApiOffline(true);
-      setError('Failed to load history. API may be offline.');
-    } finally {
-      setLoading(false);
+      // Backend down — that's fine, localStorage is the primary source
     }
+
+    // 3. Merge: prefer local, append any API rows not already present
+    const localIds = new Set(localRows.map(r => r.id));
+    const merged = [...localRows];
+    for (const apiRow of apiRows) {
+      if (!localIds.has(apiRow.id)) {
+        merged.push(apiRow);
+      }
+    }
+
+    // Sort newest first
+    merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    setRows(merged);
+    setSource(apiRows.length > 0 ? 'api+local' : 'local');
+    setLoading(false);
   }, [setApiOffline]);
 
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
 
+  // Auto-refresh every 10s
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(() => fetchHistory(), 30000);
+    const interval = setInterval(() => fetchHistory(), 10000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchHistory]);
 
-  if (error) {
-    return (
-      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-400 font-mono">
-        {error}
-      </div>
-    );
-  }
+  // ── Clear history ─────────────────────────────────────────────────
+  const handleClear = () => {
+    clearHistory();
+    setRows([]);
+  };
 
   return (
     <div>
@@ -48,6 +70,9 @@ export default function History({ setApiOffline }) {
           <span className="text-xs font-mono text-blue-400/70 tracking-widest">ANALYSIS HISTORY</span>
           <span className="bg-blue-500/10 text-blue-400 text-xs font-mono px-2 py-0.5 rounded ml-2">
             {rows.length}
+          </span>
+          <span className="text-xs text-gray-600 font-mono ml-2">
+            ({source})
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -69,6 +94,15 @@ export default function History({ setApiOffline }) {
             <Zap className="w-3 h-3" />
             AUTO
           </button>
+          {rows.length > 0 && (
+            <button
+              onClick={handleClear}
+              className="bg-navy-800 border border-red-900/40 text-xs font-mono text-red-400/60 hover:text-red-400 hover:border-red-500/40 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3 h-3" />
+              CLEAR
+            </button>
+          )}
         </div>
       </div>
 
@@ -94,6 +128,7 @@ export default function History({ setApiOffline }) {
                 <th className="text-xs font-mono text-blue-400/70 tracking-widest uppercase px-4 py-3 text-left">Verdict</th>
                 <th className="text-xs font-mono text-blue-400/70 tracking-widest uppercase px-4 py-3 text-left">Probability</th>
                 <th className="text-xs font-mono text-blue-400/70 tracking-widest uppercase px-4 py-3 text-left">Inference</th>
+                <th className="text-xs font-mono text-blue-400/70 tracking-widest uppercase px-4 py-3 text-left">Top Feature</th>
                 <th className="text-xs font-mono text-blue-400/70 tracking-widest uppercase px-4 py-3 text-left">Source</th>
               </tr>
             </thead>
@@ -118,7 +153,10 @@ export default function History({ setApiOffline }) {
                     {(row.probability * 100).toFixed(3)}%
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">
-                    {row.inference_ms}ms
+                    {typeof row.inference_ms === 'number' ? row.inference_ms.toFixed(3) : row.inference_ms}ms
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400">
+                    {row.top_shap_feature || '—'}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500 uppercase">
                     {row.source}

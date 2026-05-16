@@ -1,20 +1,27 @@
 import { useAuth, useUser, useClerk, SignOutButton } from '@clerk/clerk-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { setAuthToken } from './api/client';
 import { Shield, Activity, Clock, Info, Wifi, WifiOff, LogIn, UserPlus } from 'lucide-react';
 import Analyzer from './pages/Analyzer';
 import SHAPViewer from './pages/SHAPViewer';
 import History from './pages/History';
 import ModelInfo from './pages/ModelInfo';
+import LiveTraffic from './pages/LiveTraffic';
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [tab, setTab] = useState('analyzer');
-  const [apiOffline, setApiOffline] = useState(false);
+  const [apiOffline, setApiOffline] = useState(null);  // null = checking, true = offline, false = online
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
+
+  // Called by Analyzer after a successful analysis — forces History to re-fetch
+  const handleAnalysisComplete = useCallback(() => {
+    setHistoryKey(k => k + 1);
+  }, []);
 
   // Detect if Clerk SDK takes too long to initialize
   useEffect(() => {
@@ -23,6 +30,25 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [isLoaded]);
+
+  // Health-check the API backend on Render
+  const checkApiHealth = useCallback(async () => {
+    try {
+      const BASE_URL = import.meta.env.VITE_API_URL;
+      const res = await fetch(`${BASE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        setApiOffline(false);
+      } else {
+        setApiOffline(true);
+      }
+    } catch {
+      setApiOffline(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkApiHealth();
+  }, [checkApiHealth]);
 
   // Set auth token for API calls once signed in
   useEffect(() => {
@@ -124,15 +150,22 @@ export default function App() {
     { id: 'analyzer', label: 'Analyzer', icon: Activity },
     { id: 'shap', label: 'SHAP Viewer', icon: Shield },
     { id: 'history', label: 'History', icon: Clock },
+    { id: 'live', label: 'Live Traffic', icon: Wifi },
     { id: 'model', label: 'Model Info', icon: Info },
   ];
 
   return (
     <div className="min-h-screen bg-navy-950 text-gray-100">
-      {apiOffline && (
+      {apiOffline === true && (
         <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-2 flex items-center gap-2">
           <WifiOff className="w-4 h-4 text-amber-400 flex-shrink-0" />
-          <span className="text-xs text-amber-400 font-mono">API OFFLINE — Railway may be cold-starting. First request can take 30s.</span>
+          <span className="text-xs text-amber-400 font-mono">API OFFLINE — Render backend may be spinning up. First request can take 30-60s.</span>
+        </div>
+      )}
+      {apiOffline === false && (
+        <div className="bg-green-500/10 border-b border-green-500/30 px-6 py-2 flex items-center gap-2">
+          <Wifi className="w-4 h-4 text-green-400 flex-shrink-0" />
+          <span className="text-xs text-green-400 font-mono">Backend connected via Render</span>
         </div>
       )}
       <header className="bg-navy-900 border-b border-blue-900/40 px-6 py-3 flex items-center justify-between">
@@ -163,11 +196,10 @@ export default function App() {
           const Icon = t.icon;
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-5 py-3.5 text-xs font-mono font-medium border-b-2 transition-all ${
-                tab === t.id
+              className={`flex items-center gap-2 px-5 py-3.5 text-xs font-mono font-medium border-b-2 transition-all ${tab === t.id
                   ? 'border-blue-500 text-blue-400 bg-blue-500/5'
                   : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/5'
-              }`}>
+                }`}>
               <Icon className="w-3.5 h-3.5" />
               {t.label.toUpperCase()}
             </button>
@@ -178,6 +210,7 @@ export default function App() {
         {tab === 'analyzer' && <Analyzer setApiOffline={setApiOffline} />}
         {tab === 'shap' && <SHAPViewer setApiOffline={setApiOffline} />}
         {tab === 'history' && <History setApiOffline={setApiOffline} />}
+        {tab === 'live' && <LiveTraffic />}
         {tab === 'model' && <ModelInfo />}
       </main>
     </div>
